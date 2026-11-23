@@ -5,12 +5,25 @@ from fastapi.responses import HTMLResponse
 
 api = main.app.inner  # the FastAPI app inside the slash-collapsing wrapper
 app = main.app
+ONLY_LISTED = {"on": True}  # True = hotels not in the panel get no rooms
+_availability = main.availability
+
+
+def availability_only_listed(request, only=None):
+    out = _availability(request, only)
+    if ONLY_LISTED["on"]:
+        out = [p for p in out if p["property_id"] in main.PROPERTIES]
+    return out
+
+
+main.availability = availability_only_listed
 
 
 def settings():
     return {"tax_percent": main.TAX_PCT, "price_change_percent": main.PRICE_CHANGE_PCT,
             "default_scenario": main.DEFAULT_SCENARIO, "timeout_seconds": main.TIMEOUT_SLEEP,
-            "slow_seconds": main.SLOW_SLEEP, "nrf_cancel": main.NRF_CANCEL}
+            "slow_seconds": main.SLOW_SLEEP, "nrf_cancel": main.NRF_CANCEL,
+            "only_listed": ONLY_LISTED["on"]}
 
 
 @api.get("/__admin/settings")
@@ -27,6 +40,7 @@ async def set_settings(request: Request):
     if "timeout_seconds" in b: main.TIMEOUT_SLEEP = float(b["timeout_seconds"])
     if "slow_seconds" in b: main.SLOW_SLEEP = float(b["slow_seconds"])
     if b.get("nrf_cancel") in ("refuse", "allow"): main.NRF_CANCEL = b["nrf_cancel"]
+    if "only_listed" in b: ONLY_LISTED["on"] = bool(b["only_listed"])
     return settings()
 
 
@@ -63,6 +77,7 @@ label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:12p
 <div class="card"><h2>Global settings</h2><div class="grid">
 <label>Tax % added to every price<input id="tax_percent" type="number" step="0.01"></label>
 <label>“Will Change Price” increase %<input id="price_change_percent" type="number" step="0.01"></label>
+<label>Hotels not listed below<select id="only_listed"><option value="true">Return nothing (only my hotels)</option><option value="false">Return rooms too</option></select></label>
 <label>Scenario for hotels not listed below<select id="default_scenario"></select></label>
 <label>Timeout scenarios hang (seconds)<input id="timeout_seconds" type="number"></label>
 <label>“Confirm Slowly” wait (seconds)<input id="slow_seconds" type="number"></label>
@@ -90,7 +105,7 @@ async function load(){
   const [a,s]=await Promise.all([api('/__admin'),api('/__admin/settings')]);
   SC=a.scenarios; S={settings:s,properties:a.properties};
   for(const k of ['tax_percent','price_change_percent','timeout_seconds','slow_seconds'])$(k).value=s[k];
-  $('default_scenario').innerHTML=opts(s.default_scenario);$('nrf_cancel').value=s.nrf_cancel;
+  $('default_scenario').innerHTML=opts(s.default_scenario);$('nrf_cancel').value=s.nrf_cancel;$('only_listed').value=String(s.only_listed);
   $('hotels').innerHTML=Object.entries(a.properties).map(([id,p])=>`<tr data-id="${id}">
     <td>${id}</td><td><select class="sc">${opts(p.scenario)}</select></td>
     <td><input class="pr" type="number" step="0.01" min="0" value="${p.price}"></td>
@@ -102,7 +117,7 @@ async function load(){
     :'<tr><td colspan="5" style="color:var(--mute)">No bookings yet</td></tr>';
 }
 async function saveSettings(){
-  const b={default_scenario:$('default_scenario').value,nrf_cancel:$('nrf_cancel').value};
+  const b={default_scenario:$('default_scenario').value,nrf_cancel:$('nrf_cancel').value,only_listed:$('only_listed').value==='true'};
   for(const k of ['tax_percent','price_change_percent','timeout_seconds','slow_seconds'])b[k]=Number($(k).value);
   await api('/__admin/settings',{method:'POST',body:JSON.stringify(b)});await load();remember();toast('Settings saved');
 }
@@ -126,7 +141,7 @@ async function reapply(){
 }
 async function resetAll(){if(!confirm('Reset hotels, settings and bookings to defaults?'))return;
   await api('/__admin/reset',{method:'POST'});
-  await api('/__admin/settings',{method:'POST',body:JSON.stringify({tax_percent:15,price_change_percent:10,default_scenario:'CONFIRM',timeout_seconds:60,slow_seconds:90,nrf_cancel:'refuse'})});
+  await api('/__admin/settings',{method:'POST',body:JSON.stringify({tax_percent:15,price_change_percent:10,default_scenario:'CONFIRM',timeout_seconds:60,slow_seconds:90,nrf_cancel:'refuse',only_listed:true})});
   await load();toast('Reset done')}
 load().catch(e=>toast('Could not load: '+e.message));
 </script></body></html>"""
