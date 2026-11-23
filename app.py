@@ -1,5 +1,7 @@
 """Control panel for the fake supplier: open /__admin/ui in a browser."""
 import main
+from collections import deque
+from datetime import datetime, timezone
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 
@@ -9,10 +11,18 @@ ONLY_LISTED = {"on": True}  # True = hotels not in the panel get no rooms
 _availability = main.availability
 
 
+SEARCHES = deque(maxlen=50)
+
+
 def availability_only_listed(request, only=None):
     out = _availability(request, only)
+    asked = [p["property_id"] for p in out]
     if ONLY_LISTED["on"]:
         out = [p for p in out if p["property_id"] in main.PROPERTIES]
+    q = request.query_params
+    SEARCHES.append({"time": datetime.now(timezone.utc).strftime("%H:%M:%S"), "checkin": q.get("checkin"),
+                     "currency": q.get("currency"), "asked": len(asked),
+                     "yours": [i for i in asked if i in main.PROPERTIES], "returned": len(out)})
     return out
 
 
@@ -42,6 +52,11 @@ async def set_settings(request: Request):
     if b.get("nrf_cancel") in ("refuse", "allow"): main.NRF_CANCEL = b["nrf_cancel"]
     if "only_listed" in b: ONLY_LISTED["on"] = bool(b["only_listed"])
     return settings()
+
+
+@api.get("/__admin/searches")
+async def searches():
+    return list(SEARCHES)[::-1]
 
 
 @api.delete("/__admin/properties/{pid}")
@@ -92,6 +107,9 @@ label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:12p
 <div class="card"><h2>Bookings</h2><div class="wrap"><table><thead><tr><th>Itinerary</th><th>Booking ref</th><th>Hotel</th><th>Room status</th><th>Set status</th></tr></thead><tbody id="bookings"></tbody></table></div>
 <p class="row" style="margin:14px 0 0"><button onclick="load()">Refresh</button></p></div>
 
+<div class="card"><h2>Recent searches</h2><p class="sub">Each row is one batch your system sent. “Your hotels asked” shows which of your hotels that batch included.</p>
+<div class="wrap"><table><thead><tr><th>Time (UTC)</th><th>Check-in</th><th>Currency</th><th>Hotels asked</th><th>Your hotels asked</th><th>Hotels returned</th></tr></thead><tbody id="searches"></tbody></table></div></div>
+
 <div class="card row"><button class="pri" onclick="reapply()">Re-apply my saved setup</button><button class="bad" onclick="resetAll()">Reset everything to defaults</button></div>
 <div id="msg"></div></main>
 <script>
@@ -102,7 +120,9 @@ async function api(path,opt={}){const r=await fetch(path,{headers:{'Content-Type
 function opts(sel){return Object.entries(SC).map(([k,v])=>`<option value="${k}" ${k===sel?'selected':''}>${v}</option>`).join('')}
 function remember(){try{localStorage.setItem('fakeSupplierSetup',JSON.stringify({settings:S.settings,properties:S.properties}))}catch(e){}}
 async function load(){
-  const [a,s]=await Promise.all([api('/__admin'),api('/__admin/settings')]);
+  const [a,s,se]=await Promise.all([api('/__admin'),api('/__admin/settings'),api('/__admin/searches')]);
+  $('searches').innerHTML=se.length?se.map(x=>`<tr><td>${x.time}</td><td>${x.checkin||''}</td><td>${x.currency||''}</td><td>${x.asked}</td><td>${x.yours.length?x.yours.join(', '):'none'}</td><td>${x.returned}</td></tr>`).join('')
+    :'<tr><td colspan="6" style="color:var(--mute)">No searches since the service started</td></tr>';
   SC=a.scenarios; S={settings:s,properties:a.properties};
   for(const k of ['tax_percent','price_change_percent','timeout_seconds','slow_seconds'])$(k).value=s[k];
   $('default_scenario').innerHTML=opts(s.default_scenario);$('nrf_cancel').value=s.nrf_cancel;$('only_listed').value=String(s.only_listed);
